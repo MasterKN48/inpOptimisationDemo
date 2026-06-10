@@ -53,6 +53,7 @@ export default function Home() {
   const [history, setHistory] = useState([]);
   const [dummyTick, setDummyTick] = useState(0);
   const [useWorker, setUseWorker] = useState(false);
+  const [inputDelay, setInputDelay] = useState(0); // 0ms default keypress delay
 
   // Global click detector (dummy paint interceptor experiment)
   useEffect(() => {
@@ -274,13 +275,39 @@ export default function Home() {
                   className={styles.formInput}
                   placeholder="Type something..."
                   value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
+                  onChange={(e) => {
+                    const newValue = e.target.value;
+                    if (inputDelay > 0) {
+                      // Synchronously block the main thread on every keypress to trigger high INP
+                      simulateHeavyComputation(inputDelay);
+                    }
+                    setInputValue(newValue);
+                  }}
                 />
               </div>
 
               <div className={styles.formGroup}>
+                <label className={styles.formLabel} htmlFor="input-delay-slider">
+                  Simulated Keypress Block Duration (onChange)
+                </label>
+                <div className={styles.rangeGroup}>
+                  <input
+                    id="input-delay-slider"
+                    type="range"
+                    min="0"
+                    max="500"
+                    step="50"
+                    className={styles.formRange}
+                    value={inputDelay}
+                    onChange={(e) => setInputDelay(Number(e.target.value))}
+                  />
+                  <span className={styles.rangeValue}>{inputDelay} ms</span>
+                </div>
+              </div>
+
+              <div className={styles.formGroup}>
                 <label className={styles.formLabel} htmlFor="delay-slider">
-                  Simulated CPU Block Duration
+                  Simulated CPU Block Duration (Form Submit)
                 </label>
                 <div className={styles.rangeGroup}>
                   <input

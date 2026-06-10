@@ -7,10 +7,11 @@ An interactive React sandbox built with **Next.js (Pages Router)** and **Bun** t
 ## 🚀 Key Sandbox Features
 
 *   **Interactive Simulation Form**: Input form to submit text and trigger CPU-heavy loops from `0ms` to `2000ms`.
+*   **Simulated Keypress Block Duration**: A slider allowing you to block the main thread from `0ms` to `500ms` on every keypress during typing (`onChange`).
 *   **Dual-Thread Spinner Monitor**:
     *   *JS (Main Thread) Spinner*: Updated via `requestAnimationFrame` on the main thread. Freezes completely during CPU blocks.
     *   *CSS (Compositor Thread) Spinner*: Animated via CSS transforms. Spins smoothly in modern browsers even when JS is locked.
-*   **Live INP Dashboard**: Captures interaction latency in real-time using a browser `PerformanceObserver`.
+*   **Live INP Dashboard**: Captures interaction latency in real-time (including `keydown` event timings during typing) using a browser `PerformanceObserver`.
 *   **Submit Button Loader**: Displays a `"Processing..."` state and spinner inside the button upon submission.
 *   **Three Execution Modes**:
     *   **Synchronous**: Blocks the main thread immediately in the event listener, preventing the loader from rendering (High INP).
@@ -22,7 +23,14 @@ An interactive React sandbox built with **Next.js (Pages Router)** and **Bun** t
 
 ## 💡 INP Problems & Solutions Illustrated in This Project
 
-### 1. Yielding to the Main Thread (Optimizing Processing Duration)
+### 1. Keypress Latency (Optimizing Typing Responsiveness)
+INP measures all interactions, including keyboard input (`keydown` events). If a keypress triggers synchronous computation in an `onChange` event, the browser is blocked from painting the character on the screen.
+
+*   **The Keypress Blocking Problem**: Enabling the **Keypress Block Duration** slider stalls the event loop during typing. The character you type does not appear in the input box until the CPU block ends, causing a poor typing experience and a high keydown INP.
+
+---
+
+### 2. Yielding to the Main Thread (Optimizing Processing Duration)
 When long-running synchronous JavaScript occupies the main thread, the browser cannot paint any visual updates—not even initial feedback like button spinners or loading text.
 
 *   **Synchronous Mode (High INP)**: Executing the CPU block directly inside the event handler blocks the paint. The button loader is set in React state, but it is never painted on the screen during the freeze.
@@ -75,35 +83,6 @@ In this mode, we split event capturing and yielding across two places:
 ## ⚡ Web Worker: The Ultimate INP Solution
 
 Offloading CPU-intensive loops to a **Web Worker** runs them on a separate thread, keeping the main thread completely free.
-
-#### Implementation:
-```javascript
-function runInWorker(duration) {
-  return new Promise((resolve) => {
-    const workerCode = `
-      self.onmessage = function(e) {
-        const duration = e.data;
-        const start = performance.now();
-        let count = 0;
-        while (performance.now() - start < duration) {
-          count += Math.random() * Math.random();
-        }
-        self.postMessage(Math.round(performance.now() - start));
-      };
-    `;
-    const blob = new Blob([workerCode], { type: "application/javascript" });
-    const workerUrl = URL.createObjectURL(blob);
-    const worker = new Worker(workerUrl);
-    
-    worker.onmessage = (e) => {
-      resolve(e.data);
-      worker.terminate();
-      URL.revokeObjectURL(workerUrl);
-    };
-    worker.postMessage(duration);
-  });
-}
-```
 
 *   **Impact**: When **Web Worker** is enabled, it works in combination with all three modes. Since the computation is backgrounded, the main thread never blocks, resulting in **fluid spinner animations** and a **perfect INP score (< 20ms)** regardless of where or when you click on the page.
 
