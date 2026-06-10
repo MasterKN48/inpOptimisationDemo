@@ -15,6 +15,33 @@ async function yieldToMain() {
   });
 }
 
+function runInWorker(duration) {
+  return new Promise((resolve) => {
+    const workerCode = `
+      self.onmessage = function(e) {
+        const duration = e.data;
+        const start = performance.now();
+        let count = 0;
+        while (performance.now() - start < duration) {
+          count += Math.random() * Math.random();
+        }
+        self.postMessage(Math.round(performance.now() - start));
+      };
+    `;
+    const blob = new Blob([workerCode], { type: "application/javascript" });
+    const workerUrl = URL.createObjectURL(blob);
+    const worker = new Worker(workerUrl);
+
+    worker.onmessage = (e) => {
+      resolve(e.data);
+      worker.terminate();
+      URL.revokeObjectURL(workerUrl);
+    };
+
+    worker.postMessage(duration);
+  });
+}
+
 export default function Home() {
   const [inputValue, setInputValue] = useState("");
   const [blockDuration, setBlockDuration] = useState(1000); // 1s default
@@ -25,6 +52,7 @@ export default function Home() {
   const [jsDuration, setJsDuration] = useState(0);
   const [history, setHistory] = useState([]);
   const [dummyTick, setDummyTick] = useState(0);
+  const [useWorker, setUseWorker] = useState(false);
 
   // Global click detector (dummy paint interceptor experiment)
   useEffect(() => {
@@ -112,26 +140,38 @@ export default function Home() {
     if (executionMode === "sync") {
       setIsSubmitting(true);
       setIsBlocked(true);
-      // Synchronous block: executes immediately in the event task, freezing paint
-      const actualDuration = simulateHeavyComputation(blockDuration);
-      const end = performance.now();
-      processingTime = Math.round(end - start);
+      if (useWorker) {
+        processingTime = await runInWorker(blockDuration);
+      } else {
+        // Synchronous block: executes immediately in the event task, freezing paint
+        const actualDuration = simulateHeavyComputation(blockDuration);
+        const end = performance.now();
+        processingTime = Math.round(end - start);
+      }
     } else if (executionMode === "yield") {
       setIsSubmitting(true);
       setIsBlocked(true);
       // Yield to let the browser paint the button loader first, then run CPU block
       await yieldToMain();
-      const actualDuration = simulateHeavyComputation(blockDuration);
-      const end = performance.now();
-      processingTime = Math.round(end - start);
+      if (useWorker) {
+        processingTime = await runInWorker(blockDuration);
+      } else {
+        const actualDuration = simulateHeavyComputation(blockDuration);
+        const end = performance.now();
+        processingTime = Math.round(end - start);
+      }
     } else {
       // Global Interceptor mode: executes synchronously in submit method (per request)
       await yieldToMain();
       setIsSubmitting(true);
       setIsBlocked(true);
-      const actualDuration = simulateHeavyComputation(blockDuration);
-      const end = performance.now();
-      processingTime = Math.round(end - start);
+      if (useWorker) {
+        processingTime = await runInWorker(blockDuration);
+      } else {
+        const actualDuration = simulateHeavyComputation(blockDuration);
+        const end = performance.now();
+        processingTime = Math.round(end - start);
+      }
     }
 
     setJsDuration(processingTime);
@@ -146,12 +186,13 @@ export default function Home() {
         inputValue: inputValue || "(empty)",
         configuredDuration: blockDuration,
         jsDuration: processingTime,
-        mode:
+        mode: `${
           executionMode === "sync"
             ? "Synchronous"
             : executionMode === "yield"
               ? "Deferred (yieldToMain)"
-              : "Global Intercept",
+              : "Global Intercept"
+        }${useWorker ? " + Web Worker" : ""}`,
         timestamp,
       },
       ...prev.slice(0, 9), // limit to last 10 entries
@@ -276,6 +317,37 @@ export default function Home() {
                     Deferred (Global Interceptor - Paint to Dummy Div)
                   </option>
                 </select>
+              </div>
+
+              <div
+                className={styles.formGroup}
+                style={{
+                  flexDirection: "row",
+                  gap: "0.5rem",
+                  alignItems: "center",
+                  marginTop: "1rem",
+                  marginBottom: "0.5rem",
+                }}
+              >
+                <input
+                  id="worker-checkbox"
+                  type="checkbox"
+                  checked={useWorker}
+                  onChange={(e) => setUseWorker(e.target.checked)}
+                  style={{
+                    width: "18px",
+                    height: "18px",
+                    accentColor: "var(--color-primary)",
+                    cursor: "pointer",
+                  }}
+                />
+                <label
+                  className={styles.formLabel}
+                  htmlFor="worker-checkbox"
+                  style={{ cursor: "pointer", userSelect: "none" }}
+                >
+                  Offload Heavy Task to Web Worker (Zero Main Thread Block)
+                </label>
               </div>
 
               <button

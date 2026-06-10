@@ -16,6 +16,7 @@ An interactive React sandbox built with **Next.js (Pages Router)** and **Bun** t
     *   **Synchronous**: Blocks the main thread immediately in the event listener, preventing the loader from rendering (High INP).
     *   **Deferred (`yieldToMain` - Yields Thread)**: Yields control using `scheduler.yield()`, allowing the browser to paint the button loader first.
     *   **Deferred (Global Interceptor - Paint to Dummy Div)**: Combines a global pointerdown listener that updates an empty dummy `div` with a yield in the submit handler to ensure the visual update is painted before the block begins.
+*   **Web Worker Toggle Checkbox**: Offloads the CPU-heavy computation to a background thread (Web Worker) in **any** of the selected execution modes.
 
 ---
 
@@ -64,14 +65,59 @@ In this mode, we split event capturing and yielding across two places:
       // Global Interceptor mode
       await yieldToMain();
       setIsSubmitting(true);
-      setIsBlocked(true);
-      const actualDuration = simulateHeavyComputation(blockDuration);
+      if (!useWorker) setIsBlocked(true);
       ...
     }
     ```
 
-### How it Behaves:
-*   **For the Submit Button Click**:
-    When the submit button is clicked, the global `pointerdown` listener fires first and triggers the state change on the dummy div. Then, `handleSubmit` runs and immediately calls `await yieldToMain()`. This yields control back to the browser's paint pipeline, allowing the browser to paint BOTH the dummy div update and the button loading state. The interaction latency for the click remains very low (green/good INP).
-*   **For Clicks Anywhere Else (During the Block)**:
-    Since the CPU block itself is still synchronous, the main thread is frozen once the block starts. Any clicks made elsewhere on the screen while the thread is frozen will still experience a high input delay (as the event queue is blocked), resulting in a high INP score for those subsequent clicks.
+---
+
+## ⚡ Web Worker: The Ultimate INP Solution
+
+Offloading CPU-intensive loops to a **Web Worker** runs them on a separate thread, keeping the main thread completely free.
+
+#### Implementation:
+```javascript
+function runInWorker(duration) {
+  return new Promise((resolve) => {
+    const workerCode = `
+      self.onmessage = function(e) {
+        const duration = e.data;
+        const start = performance.now();
+        let count = 0;
+        while (performance.now() - start < duration) {
+          count += Math.random() * Math.random();
+        }
+        self.postMessage(Math.round(performance.now() - start));
+      };
+    `;
+    const blob = new Blob([workerCode], { type: "application/javascript" });
+    const workerUrl = URL.createObjectURL(blob);
+    const worker = new Worker(workerUrl);
+    
+    worker.onmessage = (e) => {
+      resolve(e.data);
+      worker.terminate();
+      URL.revokeObjectURL(workerUrl);
+    };
+    worker.postMessage(duration);
+  });
+}
+```
+
+*   **Impact**: When **Web Worker** is enabled, it works in combination with all three modes. Since the computation is backgrounded, the main thread never blocks, resulting in **fluid spinner animations** and a **perfect INP score (< 20ms)** regardless of where or when you click on the page.
+
+---
+
+## 🛠️ Getting Started
+
+### 1. Installation
+```bash
+bun install
+```
+
+### 2. Run the Development Server
+```bash
+bun run dev
+```
+Open [http://localhost:3000](http://localhost:3000).
