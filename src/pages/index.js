@@ -2,12 +2,21 @@ import Head from "next/head";
 import { useState, useEffect, useRef } from "react";
 import styles from "@/styles/Home.module.css";
 
+async function yieldToMain() {
+  if (typeof window !== "undefined" && "scheduler" in window && "yield" in window.scheduler) {
+    return await window.scheduler.yield();
+  }
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
 export default function Home() {
   const [inputValue, setInputValue] = useState("");
   const [blockDuration, setBlockDuration] = useState(1000); // 1s default
   const [isBlocked, setIsBlocked] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [executionMode, setExecutionMode] = useState("sync"); // "sync" or "deferred"
+  const [executionMode, setExecutionMode] = useState("sync"); // "sync", "timeout", or "yield"
   const [lastInp, setLastInp] = useState(0);
   const [jsDuration, setJsDuration] = useState(0);
   const [history, setHistory] = useState([]);
@@ -72,7 +81,7 @@ export default function Home() {
     return Math.round(performance.now() - start);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
     setIsBlocked(true);
@@ -99,7 +108,7 @@ export default function Home() {
         },
         ...prev.slice(0, 9),
       ]);
-    } else {
+    } else if (executionMode === "timeout") {
       // Defer using setTimeout to allow render phase to run first
       const start = performance.now();
       setTimeout(() => {
@@ -124,6 +133,33 @@ export default function Home() {
           ...prev.slice(0, 9),
         ]);
       }, 50); // 50ms delay allows the browser event loop to paint the button loader
+    } else {
+      // Yield to main thread using scheduler.yield() or setTimeout fallback
+      const start = performance.now();
+      
+      // Let the browser paint the button loader
+      await yieldToMain();
+      
+      const actualDuration = simulateHeavyComputation(blockDuration);
+      const end = performance.now();
+      const processingTime = Math.round(end - start);
+
+      setJsDuration(processingTime);
+      setIsBlocked(false);
+      setIsSubmitting(false);
+
+      const timestamp = new Date().toLocaleTimeString();
+      setHistory((prev) => [
+        {
+          id: Date.now(),
+          inputValue: inputValue || "(empty)",
+          configuredDuration: blockDuration,
+          jsDuration: processingTime,
+          mode: "scheduler.yield()",
+          timestamp,
+        },
+        ...prev.slice(0, 9),
+      ]);
     }
   };
 
@@ -238,8 +274,11 @@ export default function Home() {
                   <option value="sync">
                     Synchronous (High INP - Loader Blocked)
                   </option>
-                  <option value="deferred">
-                    Deferred (Better INP - Visible Loader)
+                  <option value="timeout">
+                    Deferred (setTimeout - Yields Thread)
+                  </option>
+                  <option value="yield">
+                    Deferred (scheduler.yield() - Modern Yield)
                   </option>
                 </select>
               </div>
