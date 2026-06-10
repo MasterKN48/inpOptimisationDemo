@@ -16,17 +16,31 @@ An interactive React sandbox built with **Next.js (Pages Router)** and **Bun** t
 *   **Three Execution Modes**:
     *   **Synchronous**: Blocks the main thread immediately in the event listener, preventing the loader from rendering (High INP).
     *   **Deferred (`yieldToMain` - Yields Thread)**: Yields control using `scheduler.yield()`, allowing the browser to paint the button loader first.
-    *   **Deferred (Global Interceptor - Paint to Dummy Div)**: Combines a global pointerdown listener that updates an empty dummy `div` with a yield in the submit handler to ensure the visual update is painted before the block begins.
+    *   **Deferred (Global Interceptor - Paint to Dummy Div)**: Combines a global pointerdown/keydown listener that updates an empty dummy `div` with a yield in the submit handler to ensure the visual update is painted before the block begins.
 *   **Web Worker Toggle Checkbox**: Offloads the CPU-heavy computation to a background thread (Web Worker) in **any** of the selected execution modes.
 
 ---
 
 ## 💡 INP Problems & Solutions Illustrated in This Project
 
-### 1. Keypress Latency (Optimizing Typing Responsiveness)
-INP measures all interactions, including keyboard input (`keydown` events). If a keypress triggers synchronous computation in an `onChange` event, the browser is blocked from painting the character on the screen.
+### 1. Controlled Inputs & Keypress Latency (The Typing INP Dilemma)
 
-*   **The Keypress Blocking Problem**: Enabling the **Keypress Block Duration** slider stalls the event loop during typing. The character you type does not appear in the input box until the CPU block ends, causing a poor typing experience and a high keydown INP.
+When simulating typing latency (Keypress Block Duration > 0), the performance profiles behave differently depending on the active execution mode:
+
+1. **Synchronous Mode**:
+   - The state is updated, and the blocking CPU loop runs immediately inside the `onChange` event task.
+   - *Result*: severe lag while typing, character updates are visually frozen, and INP is very high (matching the block duration).
+
+2. **Deferred Mode (`yieldToMain`)**:
+   - The state is updated synchronously.
+   - We yield to the event loop using `await yieldToMain()`, then run the blocking loop.
+   - *Result*: Because yielding only schedules a macro task which often runs *before* the next VSync paint (paint throttling) and subsequent keypresses accumulate queueing delays, typing remains laggy with a high INP score.
+
+3. **Optimized (Debounced) Mode**:
+   - The state is updated synchronously.
+   - The heavy CPU block is **debounced** using a timer ref.
+   - If the user types a new character before the debounce timer (e.g., 250ms) finishes, the previous scheduled block is canceled.
+   - *Result*: Typing is completely fluid and responsive, characters render instantly (< 16ms), and INP remains low. Once the user stops typing, the CPU block is safely executed.
 
 ---
 
@@ -54,29 +68,22 @@ In this mode, we split event capturing and yielding across two places:
 1.  **Global Click Listener**: A capture-phase listener is added to `window` for `pointerdown` events:
     ```javascript
     useEffect(() => {
-      const handleGlobalClick = () => {
+      const handleGlobalInteraction = () => {
         if (executionMode === "intercept") {
           setDummyTick((prev) => prev + 1); // Toggles state of dummy element
         }
       };
-      window.addEventListener("pointerdown", handleGlobalClick, true);
-      ...
+      window.addEventListener("pointerdown", handleGlobalInteraction, true);
+      return () => {
+        window.removeEventListener("pointerdown", handleGlobalInteraction, true);
+      };
     }, [executionMode]);
     ```
 2.  **Dummy Paint Target**: An empty off-screen `div` has its opacity toggled by `dummyTick`, prompting the browser to schedule a repaint:
     ```html
     <div id="dummy-paint-target" style={{ opacity: dummyTick % 2 === 0 ? 0.99 : 1, width: "1px", height: "1px", position: "absolute", left: "-9999px" }}></div>
     ```
-3.  **Submission Yielding**: Inside `handleSubmit`, we yield control before the heavy CPU block starts:
-    ```javascript
-    } else {
-      // Global Interceptor mode
-      await yieldToMain();
-      setIsSubmitting(true);
-      if (!useWorker) setIsBlocked(true);
-      ...
-    }
-    ```
+3.  **Submission Yielding**: Inside `handleSubmit`, we yield control before the heavy CPU block starts.
 
 ---
 

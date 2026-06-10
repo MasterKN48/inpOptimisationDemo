@@ -54,21 +54,31 @@ export default function Home() {
   const [dummyTick, setDummyTick] = useState(0);
   const [useWorker, setUseWorker] = useState(false);
   const [inputDelay, setInputDelay] = useState(0); // 0ms default keypress delay
+  const typingTimeoutRef = useRef(null);
+
+  // Clean up typing timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Global click detector (dummy paint interceptor experiment)
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const handleGlobalClick = () => {
+    const handleGlobalInteraction = () => {
       if (executionMode === "intercept") {
         // Force a visual paint on the dummy div by toggling its style
         setDummyTick((prev) => prev + 1);
       }
     };
 
-    window.addEventListener("pointerdown", handleGlobalClick, true);
+    window.addEventListener("pointerdown", handleGlobalInteraction, true);
     return () => {
-      window.removeEventListener("pointerdown", handleGlobalClick, true);
+      window.removeEventListener("pointerdown", handleGlobalInteraction, true);
     };
   }, [executionMode]);
 
@@ -275,19 +285,42 @@ export default function Home() {
                   className={styles.formInput}
                   placeholder="Type something..."
                   value={inputValue}
-                  onChange={(e) => {
+                  onChange={async (e) => {
                     const newValue = e.target.value;
-                    if (inputDelay > 0) {
-                      // Synchronously block the main thread on every keypress to trigger high INP
-                      simulateHeavyComputation(inputDelay);
-                    }
+
+                    // 1. Update state synchronously so the value prints immediately
                     setInputValue(newValue);
+
+                    // Clear any scheduled CPU block from the previous keystroke
+                    if (typingTimeoutRef.current) {
+                      clearTimeout(typingTimeoutRef.current);
+                      typingTimeoutRef.current = null;
+                    }
+
+                    if (inputDelay <= 0) return;
+
+                    if (executionMode === "sync") {
+                      // Synchronous mode: block immediately (causes lag and high INP)
+                      simulateHeavyComputation(inputDelay);
+                    } else if (executionMode === "yield") {
+                      // Yield mode: yield but run block on every keystroke
+                      await yieldToMain();
+                      simulateHeavyComputation(inputDelay);
+                    } else {
+                      // Optimized (Debounced) mode: Debounce the heavy block so active typing is smooth
+                      typingTimeoutRef.current = setTimeout(() => {
+                        simulateHeavyComputation(inputDelay);
+                      }, 250); // 250ms debounce delay
+                    }
                   }}
                 />
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.formLabel} htmlFor="input-delay-slider">
+                <label
+                  className={styles.formLabel}
+                  htmlFor="input-delay-slider"
+                >
                   Simulated Keypress Block Duration (onChange)
                 </label>
                 <div className={styles.rangeGroup}>
