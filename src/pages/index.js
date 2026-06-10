@@ -3,7 +3,11 @@ import { useState, useEffect, useRef } from "react";
 import styles from "@/styles/Home.module.css";
 
 async function yieldToMain() {
-  if (typeof window !== "undefined" && "scheduler" in window && "yield" in window.scheduler) {
+  if (
+    typeof window !== "undefined" &&
+    "scheduler" in window &&
+    "yield" in window.scheduler
+  ) {
     return await window.scheduler.yield();
   }
   return new Promise((resolve) => {
@@ -16,10 +20,28 @@ export default function Home() {
   const [blockDuration, setBlockDuration] = useState(1000); // 1s default
   const [isBlocked, setIsBlocked] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [executionMode, setExecutionMode] = useState("sync"); // "sync" or "yield"
+  const [executionMode, setExecutionMode] = useState("sync"); // "sync", "yield", or "intercept"
   const [lastInp, setLastInp] = useState(0);
   const [jsDuration, setJsDuration] = useState(0);
   const [history, setHistory] = useState([]);
+  const [dummyTick, setDummyTick] = useState(0);
+
+  // Global click detector (dummy paint interceptor experiment)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleGlobalClick = () => {
+      if (executionMode === "intercept") {
+        // Force a visual paint on the dummy div by toggling its style
+        setDummyTick((prev) => prev + 1);
+      }
+    };
+
+    window.addEventListener("pointerdown", handleGlobalClick, true);
+    return () => {
+      window.removeEventListener("pointerdown", handleGlobalClick, true);
+    };
+  }, [executionMode]);
 
   const jsSpinnerRef = useRef(null);
 
@@ -83,20 +105,30 @@ export default function Home() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setIsSubmitting(true);
-    setIsBlocked(true);
 
     const start = performance.now();
     let processingTime = 0;
 
     if (executionMode === "sync") {
+      setIsSubmitting(true);
+      setIsBlocked(true);
       // Synchronous block: executes immediately in the event task, freezing paint
       const actualDuration = simulateHeavyComputation(blockDuration);
       const end = performance.now();
       processingTime = Math.round(end - start);
-    } else {
+    } else if (executionMode === "yield") {
+      setIsSubmitting(true);
+      setIsBlocked(true);
       // Yield to let the browser paint the button loader first, then run CPU block
       await yieldToMain();
+      const actualDuration = simulateHeavyComputation(blockDuration);
+      const end = performance.now();
+      processingTime = Math.round(end - start);
+    } else {
+      // Global Interceptor mode: executes synchronously in submit method (per request)
+      await yieldToMain();
+      setIsSubmitting(true);
+      setIsBlocked(true);
       const actualDuration = simulateHeavyComputation(blockDuration);
       const end = performance.now();
       processingTime = Math.round(end - start);
@@ -114,7 +146,12 @@ export default function Home() {
         inputValue: inputValue || "(empty)",
         configuredDuration: blockDuration,
         jsDuration: processingTime,
-        mode: executionMode === "sync" ? "Synchronous" : "Deferred (yieldToMain)",
+        mode:
+          executionMode === "sync"
+            ? "Synchronous"
+            : executionMode === "yield"
+              ? "Deferred (yieldToMain)"
+              : "Global Intercept",
         timestamp,
       },
       ...prev.slice(0, 9), // limit to last 10 entries
@@ -235,10 +272,17 @@ export default function Home() {
                   <option value="yield">
                     Deferred (yieldToMain - Yields Thread)
                   </option>
+                  <option value="intercept">
+                    Deferred (Global Interceptor - Paint to Dummy Div)
+                  </option>
                 </select>
               </div>
 
-              <button type="submit" className={styles.submitBtn} disabled={isSubmitting}>
+              <button
+                type="submit"
+                className={styles.submitBtn}
+                disabled={isSubmitting}
+              >
                 {isSubmitting && <span className={styles.btnSpinner}></span>}
                 {isSubmitting ? "Processing..." : "Submit & Start CPU Work"}
               </button>
@@ -434,6 +478,21 @@ export default function Home() {
             </div>
           </section>
         </main>
+
+        {/* Dummy Paint Target Div */}
+        <div
+          id="dummy-paint-target"
+          style={{
+            opacity: dummyTick % 2 === 0 ? 0.99 : 1,
+            width: "1px",
+            height: "1px",
+            position: "absolute",
+            left: "-9999px",
+            overflow: "hidden",
+          }}
+        >
+          Paint Tick: {dummyTick}
+        </div>
 
         <footer className={styles.footer}>
           INP Sandbox App • Built with Next.js Pages Router & Bun
