@@ -2,10 +2,21 @@ import Head from "next/head";
 import { useState, useEffect, useRef } from "react";
 import styles from "@/styles/Home.module.css";
 
+async function yieldToMain() {
+  if (typeof window !== "undefined" && "scheduler" in window && "yield" in window.scheduler) {
+    return await window.scheduler.yield();
+  }
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
 export default function Home() {
   const [inputValue, setInputValue] = useState("");
   const [blockDuration, setBlockDuration] = useState(1000); // 1s default
   const [isBlocked, setIsBlocked] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [executionMode, setExecutionMode] = useState("sync"); // "sync" or "yield"
   const [lastInp, setLastInp] = useState(0);
   const [jsDuration, setJsDuration] = useState(0);
   const [history, setHistory] = useState([]);
@@ -70,24 +81,30 @@ export default function Home() {
     return Math.round(performance.now() - start);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-
-    // Temporarily mark status as blocked (Note: UI will only repaint this *after* the sync block completes,
-    // which illustrates the core problem of high INP / unresponsive event loops)
+    setIsSubmitting(true);
     setIsBlocked(true);
 
     const start = performance.now();
+    let processingTime = 0;
 
-    // Run CPU heavy loop
-    const actualDuration = simulateHeavyComputation(blockDuration);
+    if (executionMode === "sync") {
+      // Synchronous block: executes immediately in the event task, freezing paint
+      const actualDuration = simulateHeavyComputation(blockDuration);
+      const end = performance.now();
+      processingTime = Math.round(end - start);
+    } else {
+      // Yield to let the browser paint the button loader first, then run CPU block
+      await yieldToMain();
+      const actualDuration = simulateHeavyComputation(blockDuration);
+      const end = performance.now();
+      processingTime = Math.round(end - start);
+    }
 
-    const end = performance.now();
-    const processingTime = Math.round(end - start);
-
-    // Update state after blocking
     setJsDuration(processingTime);
     setIsBlocked(false);
+    setIsSubmitting(false);
 
     // Add to history
     const timestamp = new Date().toLocaleTimeString();
@@ -97,6 +114,7 @@ export default function Home() {
         inputValue: inputValue || "(empty)",
         configuredDuration: blockDuration,
         jsDuration: processingTime,
+        mode: executionMode === "sync" ? "Synchronous" : "Deferred (yieldToMain)",
         timestamp,
       },
       ...prev.slice(0, 9), // limit to last 10 entries
@@ -201,8 +219,28 @@ export default function Home() {
                 </div>
               </div>
 
-              <button type="submit" className={styles.submitBtn}>
-                Submit & Block Main Thread
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel} htmlFor="mode-select">
+                  Execution Mode
+                </label>
+                <select
+                  id="mode-select"
+                  className={styles.formInput}
+                  value={executionMode}
+                  onChange={(e) => setExecutionMode(e.target.value)}
+                >
+                  <option value="sync">
+                    Synchronous (High INP - Loader Blocked)
+                  </option>
+                  <option value="yield">
+                    Deferred (yieldToMain - Yields Thread)
+                  </option>
+                </select>
+              </div>
+
+              <button type="submit" className={styles.submitBtn} disabled={isSubmitting}>
+                {isSubmitting && <span className={styles.btnSpinner}></span>}
+                {isSubmitting ? "Processing..." : "Submit & Start CPU Work"}
               </button>
             </form>
           </section>
@@ -382,7 +420,7 @@ export default function Home() {
                         <span className={styles.historyHighlight}>
                           {item.configuredDuration}ms
                         </span>{" "}
-                        | Latency:{" "}
+                        ({item.mode || "Synchronous"}) | Latency:{" "}
                         <span
                           className={`${styles.historyMetric} ${cat.textClass}`}
                         >
