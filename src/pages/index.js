@@ -307,6 +307,7 @@ export default function Home() {
                       await yieldToMain();
                       simulateHeavyComputation(inputDelay);
                     } else {
+                      await yieldToMain();
                       // Optimized (Debounced) mode: Debounce the heavy block so active typing is smooth
                       typingTimeoutRef.current = setTimeout(() => {
                         simulateHeavyComputation(inputDelay);
